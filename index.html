@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
 <title>Vellum 数字乐园 · 数数和加法小游戏</title>
 <meta name="description" content="为 3 岁小朋友设计的全屏数字小游戏：认识数字、数一数、十以内的加法。点一下数字就会爆成彩色小精灵。视觉元素来自 vellum.ai 主页粒子动画。"/>
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
@@ -27,6 +27,7 @@
     position: fixed; top: 0; left: 0; right: 0; height: 56px; z-index: 10;
     display: flex; align-items: center; justify-content: space-between;
     padding: 0 14px;
+    padding-top: env(safe-area-inset-top, 0px);
     background: rgba(255,255,255,0.72);
     backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
     border-bottom: 1px solid rgba(0,0,0,0.05);
@@ -539,6 +540,38 @@ function charSize(n, maxWidth) {
   return Math.max(26, Math.min(84, (maxWidth || W * 0.88) / (perRow * 1.15)));
 }
 
+// 矮屏（手机横屏等）判定：空间太挤时启用紧凑布局
+function isCompact() { return H < 560; }
+
+// 选项布局：整组居中排布；放不下时缩小字号（保证两位数 10 也能放下）
+function optionLayout(nums, cy, height) {
+  let h = height;
+  const minH = Math.max(44, Math.min(64, H * 0.15));
+  let widths = nums.map(n => numWidth(n, h));
+  let gap = Math.min(W * 0.16, h * 0.55);
+  let total = widths.reduce((x, y) => x + y, 0) + gap * (nums.length - 1);
+  while (total > W * 0.94 && h > minH) {
+    h -= 3;
+    widths = nums.map(n => numWidth(n, h));
+    gap = Math.min(W * 0.16, h * 0.55);
+    total = widths.reduce((x, y) => x + y, 0) + gap * (nums.length - 1);
+  }
+  let x = W / 2 - total / 2;
+  return nums.map((num, i) => ({ num, cx: x + widths[i] / 2, cy, height: h, w: widths[i] }));
+}
+
+// 字符网格：在上下边界带内自适应尺寸（不超出可用空间）
+function charGridIn(n, cx, bandTop, bandBottom) {
+  const perRow = Math.min(5, n);
+  const rows = Math.ceil(n / perRow);
+  let size = charSize(n);
+  const band = bandBottom - bandTop;
+  size = Math.min(size, band / ((rows - 1) * 1.2 + 1));
+  size = Math.max(20, size);
+  const cy = (bandTop + bandBottom) / 2;
+  return charGrid(n, cx, cy, size);
+}
+
 /* ============================================================
    音效 + 发音
    ============================================================ */
@@ -655,14 +688,30 @@ function buildMenu() {
 /* ---------- 学数字：一个大数字 + 对应数量的小精灵，点→炸→下一个 ---------- */
 let learnState = null;
 function learnGeo() {
-  const height = Math.min(H * 0.32, W * 0.42);
-  return { cx: W / 2, cy: H * 0.33, height };
+  const compact = isCompact();
+  const capBottom = document.getElementById('learnCap').getBoundingClientRect().bottom;
+  let height = Math.min(H * 0.32, W * 0.42);
+  if (compact) {
+    height = Math.min(height, H * 0.24, Math.max(56, H * 0.5 - capBottom - 24));
+  }
+  const cy = compact ? Math.max(H * 0.3, capBottom + height * 0.55 + 4) : H * 0.33;
+  return { cx: W / 2, cy, height };
 }
 function learnNum() { return NUMBERS[learnState.idx]; }
+function learnCharsGeom(n) {
+  if (!isCompact()) return charGrid(n, W / 2, H * 0.66, charSize(n));
+  const g = learnGeo();
+  const bandTop = g.cy + g.height * 0.55 + 8;
+  const bandBottom = H - 10;
+  return charGridIn(n, W / 2, bandTop, bandBottom);
+}
 function learnNumRect() {
   const g = learnGeo();
   const w = numWidth(learnNum(), g.height);
-  return { x0: g.cx - w * 0.9, x1: g.cx + w * 0.9, y0: g.cy - g.height * 0.7, y1: g.cy + g.height * 0.7 };
+  return {
+    x0: Math.max(0, g.cx - w * 0.75), x1: Math.min(W, g.cx + w * 0.75),
+    y0: Math.max(0, g.cy - g.height * 0.55), y1: Math.min(H, g.cy + g.height * 0.55)
+  };
 }
 function updateLearnCaption() {
   const n = learnNum();
@@ -672,8 +721,7 @@ function updateLearnCaption() {
 function buildLearn() {
   const n = NUMBERS[0];
   const g = learnGeo();
-  const size = charSize(n);
-  const chars = charGrid(n, W / 2, H * 0.66, size);
+  const chars = learnCharsGeom(n);
   learnState = {
     idx: 0, stage: 'idle', stageAt: performance.now(), phase: Math.random() * 6.28,
     chars, charPop: []
@@ -707,8 +755,7 @@ function renderLearn(now) {
     if (now - s.stageAt > 420) {
       s.idx = (s.idx + 1) % 10;
       const n2 = learnNum();
-      const size = charSize(n2);
-      s.chars = charGrid(n2, W / 2, H * 0.66, size);
+      s.chars = learnCharsGeom(n2);
       s.charPop = [];
       s.stage = 'idle'; s.stageAt = now;
       updateLearnCaption();
@@ -760,24 +807,32 @@ function buildCount() {
   }
   const dist = shuffle(candidates).slice(0, 2);
   const options = shuffle([n, ...dist]);
-  const size = charSize(n);
+  const compact = isCompact();
+  const optH0 = Math.max(64, Math.min(H * 0.2, W * 0.24, 170));
+  const probe = optionLayout(options, 0, optH0);
+  const optCy = compact ? H - probe[0].height / 2 - 12 : H * 0.78;
+  const optLayout = optionLayout(options, optCy, probe[0].height);
+  let chars;
+  if (compact) {
+    const qBottom = document.querySelector('#countView .q-bar').getBoundingClientRect().bottom;
+    chars = charGridIn(n, W / 2, qBottom + 10, optCy - optLayout[0].height / 2 - 10);
+  } else {
+    chars = charGrid(n, W / 2, H * 0.44, charSize(n));
+  }
   countState = {
-    n, options,
-    chars: charGrid(n, W / 2, H * 0.44, size),
+    n, options, optLayout, chars,
     wrongs: 0, hintIdx: -1, lock: false,
     popIdx: -1, popT: 0, shakeIdx: -1, shakeT: 0,
     phase: Math.random() * 6.28, _at: performance.now()
   };
   ding();
 }
-function countOptionGeo(i) {
-  const height = Math.max(80, Math.min(H * 0.2, W * 0.26, 170));
-  const gap = Math.min(W * 0.32, 230);
-  return { num: countState.options[i], cx: W / 2 + (i - 1) * gap, cy: H * 0.78, height };
-}
+function countOptionGeo(i) { return countState.optLayout[i]; }
 function countOptionRect(o) {
-  const w = numWidth(o.num, o.height);
-  return { x0: o.cx - w * 0.95, x1: o.cx + w * 0.95, y0: o.cy - o.height * 0.78, y1: o.cy + o.height * 0.78 };
+  return {
+    x0: Math.max(0, o.cx - o.w * 0.75), x1: Math.min(W, o.cx + o.w * 0.75),
+    y0: Math.max(0, o.cy - o.height * 0.75), y1: Math.min(H, o.cy + o.height * 0.75)
+  };
 }
 function renderCount(now) {
   const s = countState;
@@ -852,11 +907,33 @@ function buildAdd() {
   }
   const dist = shuffle(candidates).slice(0, 2);
   const options = shuffle([sum, ...dist]);
-  const sideSize = Math.max(22, Math.min(84, (W * 0.44) / (Math.max(a, b) * 1.15)));
+  const compact = isCompact();
+  // 算式（紧凑屏时贴顶栏下方，不重叠）
+  const eqH = Math.max(compact ? 40 : 52, Math.min(H * 0.12, W * 0.13, 110));
+  const hudBottom = document.querySelector('.hud').getBoundingClientRect().bottom;
+  const eqCy = compact ? Math.max(hudBottom + eqH * 0.6 + 4, H * 0.1) : H * 0.2;
+  // 选项（整组居中，放不下缩字号）
+  const optH0 = Math.max(64, Math.min(H * 0.2, W * 0.24, 170));
+  const probe = optionLayout(options, 0, optH0);
+  const optCy = compact ? H - probe[0].height / 2 - 12 : H * 0.8;
+  const optLayout = optionLayout(options, optCy, probe[0].height);
+  // 小精灵（紧凑屏时在算式与选项之间自适应）
+  const sideSizeBase = Math.max(22, Math.min(84, (W * 0.44) / (Math.max(a, b) * 1.15)));
+  let sideSize = sideSizeBase;
+  let charsCy = H * 0.52;
+  if (compact) {
+    const rowsA = Math.ceil(a / 5), rowsB = Math.ceil(b / 5);
+    const rows = Math.max(rowsA, rowsB);
+    const bandTop = eqCy + eqH * 0.6 + 8;
+    const bandBottom = optCy - optLayout[0].height / 2 - 8;
+    sideSize = Math.min(sideSize, (bandBottom - bandTop) / ((rows - 1) * 1.2 + 1));
+    sideSize = Math.max(18, sideSize);
+    charsCy = (bandTop + bandBottom) / 2;
+  }
   addState = {
-    a, b, sum, options,
-    charsA: charGrid(a, W * 0.30, H * 0.52, sideSize),
-    charsB: charGrid(b, W * 0.70, H * 0.52, sideSize),
+    a, b, sum, options, eqH, eqCy, optLayout,
+    charsA: charGrid(a, W * 0.30, charsCy, sideSize),
+    charsB: charGrid(b, W * 0.70, charsCy, sideSize),
     wrongs: 0, hintIdx: -1, lock: false,
     popIdx: -1, popT: 0, shakeIdx: -1, shakeT: 0,
     phase: Math.random() * 6.28, _at: performance.now()
@@ -864,8 +941,7 @@ function buildAdd() {
   ding();
 }
 function addEqGeo() {
-  const height = Math.max(52, Math.min(H * 0.12, W * 0.13, 110));
-  return { height, cy: H * 0.2 };
+  return { height: addState.eqH, cy: addState.eqCy };
 }
 function addEqPositions() {
   const g = addEqGeo();
@@ -882,14 +958,12 @@ function addEqPositions() {
     return pos;
   });
 }
-function addOptionGeo(i) {
-  const height = Math.max(80, Math.min(H * 0.2, W * 0.26, 170));
-  const gap = Math.min(W * 0.32, 230);
-  return { num: addState.options[i], cx: W / 2 + (i - 1) * gap, cy: H * 0.8, height };
-}
+function addOptionGeo(i) { return addState.optLayout[i]; }
 function addOptionRect(o) {
-  const w = numWidth(o.num, o.height);
-  return { x0: o.cx - w * 0.95, x1: o.cx + w * 0.95, y0: o.cy - o.height * 0.78, y1: o.cy + o.height * 0.78 };
+  return {
+    x0: Math.max(0, o.cx - o.w * 0.75), x1: Math.min(W, o.cx + o.w * 0.75),
+    y0: Math.max(0, o.cy - o.height * 0.75), y1: Math.min(H, o.cy + o.height * 0.75)
+  };
 }
 function renderAdd(now) {
   const s = addState;
@@ -1204,7 +1278,46 @@ window.__G = {
   get countState() { return countState; },
   get addState() { return addState; },
   setScene, sceneTap, buildCount, buildAdd, buildLearn,
-  countOptionGeo, addOptionGeo
+  countOptionGeo, addOptionGeo,
+  // 布局审计（返回各场景元素的几何信息，供多设备自检）
+  audit: () => {
+    const out = { scene, W, H, hudBottom: document.querySelector('.hud').getBoundingClientRect().bottom };
+    if (scene === 'learn' && learnState) {
+      const g = learnGeo();
+      out.learn = {
+        num: learnNum(),
+        numRect: learnNumRect(),
+        chars: learnState.chars.map(c => ({ x: c.x, y: c.y, size: c.size })),
+        captionBottom: document.getElementById('learnCap').getBoundingClientRect().bottom
+      };
+    }
+    if (scene === 'count' && countState) {
+      const q = document.querySelector('#countView .q-bar');
+      out.count = {
+        n: countState.n,
+        chars: countState.chars.map(c => ({ x: c.x, y: c.y, size: c.size })),
+        qBottom: q ? q.getBoundingClientRect().bottom : 0,
+        options: countState.options.map((_, i) => {
+          const o = countOptionGeo(i);
+          const r = countOptionRect(o);
+          return { num: o.num, x: o.cx, y: o.cy, h: o.height, rect: [r.x0, r.y0, r.x1, r.y1] };
+        })
+      };
+    }
+    if (scene === 'add' && addState) {
+      out.add = {
+        eq: addEqPositions().map(p => ({ ch: p.ch, x: p.cx, y: p.cy, h: p.height, w: glyphWidth(p.ch, p.height) })),
+        charsA: addState.charsA.map(c => ({ x: c.x, y: c.y, size: c.size })),
+        charsB: addState.charsB.map(c => ({ x: c.x, y: c.y, size: c.size })),
+        options: addState.options.map((_, i) => {
+          const o = addOptionGeo(i);
+          const r = addOptionRect(o);
+          return { num: o.num, x: o.cx, y: o.cy, h: o.height, rect: [r.x0, r.y0, r.x1, r.y1] };
+        })
+      };
+    }
+    return out;
+  }
 };
 
 init();

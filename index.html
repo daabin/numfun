@@ -543,18 +543,35 @@ function charSize(n, maxWidth) {
 // 矮屏（手机横屏等）判定：空间太挤时启用紧凑布局
 function isCompact() { return H < 560; }
 
-// 选项布局：整组居中排布；放不下时缩小字号（保证两位数 10 也能放下）
+// 选项布局：整组居中排布；保证数字之间不重叠
 function optionLayout(nums, cy, height) {
   let h = height;
   const minH = Math.max(44, Math.min(64, H * 0.15));
   let widths = nums.map(n => numWidth(n, h));
   let gap = Math.min(W * 0.16, h * 0.55);
   let total = widths.reduce((x, y) => x + y, 0) + gap * (nums.length - 1);
-  while (total > W * 0.94 && h > minH) {
+  // 第一步：缩小字号直到总宽度 ≤ 95% 屏幕宽
+  while (total > W * 0.95 && h > minH) {
     h -= 3;
     widths = nums.map(n => numWidth(n, h));
     gap = Math.min(W * 0.16, h * 0.55);
     total = widths.reduce((x, y) => x + y, 0) + gap * (nums.length - 1);
+  }
+  // 第二步：保证视觉间距（gap 是数字边缘之间的距离，必须 > 0 才不重叠）
+  if (nums.length > 1) {
+    const maxW = Math.max(...widths);
+    const MIN_VISUAL_GAP = 8; // 数字之间至少留 8px 空隙
+    const visualGap = gap - maxW;
+    if (visualGap < MIN_VISUAL_GAP) {
+      gap = maxW + MIN_VISUAL_GAP;
+      // 如果加大间距后放不下，按比例压缩直到刚好塞进 95% 屏幕
+      const sumW = widths.reduce((x, y) => x + y, 0);
+      let newTotal = sumW + gap * (nums.length - 1);
+      if (newTotal > W * 0.95) {
+        gap = Math.max(maxW + 2, (W * 0.95 - sumW) / (nums.length - 1));
+      }
+      total = sumW + gap * (nums.length - 1);
+    }
   }
   let x = W / 2 - total / 2;
   return nums.map((num, i) => ({ num, cx: x + widths[i] / 2, cy, height: h, w: widths[i] }));
@@ -1189,7 +1206,12 @@ function init() {
   document.getElementById('menuSub').textContent = MENU_SUB.replace(/\$\{FOR\}/g, FOR);
 
   resizeCanvas();
-  setScene('menu');
+
+  // 等字体加载完再初始化布局，避免 canvas 测量宽度与实际渲染不一致
+  const ready = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
+  ready.then(() => {
+    setScene('menu');
+  });
 
   window.addEventListener('resize', () => { resizeCanvas(); setScene(scene); }, { passive: true });
 

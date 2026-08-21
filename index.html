@@ -457,7 +457,13 @@ function drawText(str, cx, cy, sizePx, alpha, scale) {
 
 // 兼容旧调用：以视觉高度为单位
 function glyphWidth(ch, height) { return textW(ch, fontPx(height)); }
-function numWidth(num, height) { return textW(String(num), fontPx(height)); }
+function numWidth(num, height) {
+  const measured = textW(String(num), fontPx(height));
+  // 兜底：若字体尚未加载导致测量值偏小，用保守估计避免重叠
+  // DM Sans 700 数字实际宽度约为高度的 0.55~0.95 倍
+  const minW = height * 0.55 * String(num).length;
+  return Math.max(measured, minW);
+}
 function drawGlyphs(num, cx, cy, height, alpha, scale) {
   drawText(String(num), cx, cy, fontPx(height), alpha, scale);
 }
@@ -546,17 +552,17 @@ function isCompact() { return H < 560; }
 // 选项布局：整组居中排布；保证数字之间不重叠、不被底部截断
 function optionLayout(nums, cy, height) {
   let h = height;
-  const minH = Math.max(40, Math.min(52, H * 0.10));
-  const maxSingleW = W * 0.26;            // 单个数字最大占屏幕 26%
-  const minVisualGapRatio = 0.55;         // 视觉间距 ≥ 文字宽度的 55%
+  const minH = Math.max(36, Math.min(44, H * 0.08));
+  const maxSingleW = W * 0.24;            // 单个数字最大占屏幕 24%
+  const minVisualGapRatio = 0.75;         // 视觉间距 ≥ 文字宽度的 75%
 
-  // 同步缩小字号，直到：总宽度 ≤ 94% 屏幕宽 且 单个数字宽度 ≤ 26% 屏幕宽
+  // 同步缩小字号，直到：总宽度 ≤ 92% 屏幕宽 且 单个数字宽度 ≤ 24% 屏幕宽
   while (h > minH) {
     const widths = nums.map(n => numWidth(n, h));
     const maxW = Math.max(...widths);
     const gap = maxW * minVisualGapRatio; // gap 是相邻数字边缘之间的距离
     const total = widths.reduce((x, y) => x + y, 0) + gap * (nums.length - 1);
-    if (total <= W * 0.94 && maxW <= maxSingleW) break;
+    if (total <= W * 0.92 && maxW <= maxSingleW) break;
     h -= 3;
   }
 
@@ -565,15 +571,19 @@ function optionLayout(nums, cy, height) {
   let gap = maxW * minVisualGapRatio;
   let total = widths.reduce((x, y) => x + y, 0) + gap * (nums.length - 1);
 
-  // 兜底：若仍超出屏幕，按比例压缩间距，但保证视觉间距至少为 4px
-  if (total > W * 0.94) {
+  // 兜底：若仍超出屏幕，按比例压缩间距，但保证视觉间距至少为 6px
+  if (total > W * 0.92) {
     const sumW = widths.reduce((x, y) => x + y, 0);
-    gap = Math.max(maxW + 4, (W * 0.94 - sumW) / (nums.length - 1));
+    gap = Math.max(maxW + 6, (W * 0.92 - sumW) / (nums.length - 1));
     total = sumW + gap * (nums.length - 1);
   }
 
   let x = W / 2 - total / 2;
-  return nums.map((num, i) => ({ num, cx: x + widths[i] / 2, cy, height: h, w: widths[i] }));
+  return nums.map((num, i) => {
+    const pos = { num, cx: x + widths[i] / 2, cy, height: h, w: widths[i] };
+    x += widths[i] + gap;
+    return pos;
+  });
 }
 
 // 字符网格：在上下边界带内自适应尺寸（不超出可用空间）
@@ -824,9 +834,9 @@ function buildCount() {
   const dist = shuffle(candidates).slice(0, 2);
   const options = shuffle([n, ...dist]);
   const compact = isCompact();
-  const optH0 = Math.max(56, Math.min(H * 0.15, W * 0.18, 110));
+  const optH0 = Math.max(48, Math.min(H * 0.12, W * 0.14, 80));
   const probe = optionLayout(options, 0, optH0);
-  const optCy = compact ? H - probe[0].height / 2 - 14 : H * 0.74;
+  const optCy = compact ? H - probe[0].height / 2 - 16 : Math.min(H * 0.72, H - probe[0].height - 20);
   const optLayout = optionLayout(options, optCy, probe[0].height);
   let chars;
   if (compact) {
@@ -929,9 +939,9 @@ function buildAdd() {
   const hudBottom = document.querySelector('.hud').getBoundingClientRect().bottom;
   const eqCy = compact ? Math.max(hudBottom + eqH * 0.6 + 4, H * 0.1) : H * 0.2;
   // 选项（整组居中，放不下缩字号）
-  const optH0 = Math.max(56, Math.min(H * 0.15, W * 0.18, 110));
+  const optH0 = Math.max(48, Math.min(H * 0.12, W * 0.14, 80));
   const probe = optionLayout(options, 0, optH0);
-  const optCy = compact ? H - probe[0].height / 2 - 14 : H * 0.74;
+  const optCy = compact ? H - probe[0].height / 2 - 16 : Math.min(H * 0.72, H - probe[0].height - 20);
   const optLayout = optionLayout(options, optCy, probe[0].height);
   // 小精灵（紧凑屏时在算式与选项之间自适应）
   const sideSizeBase = Math.max(22, Math.min(84, (W * 0.44) / (Math.max(a, b) * 1.15)));
@@ -1206,11 +1216,18 @@ function init() {
 
   resizeCanvas();
 
-  // 等字体加载完再初始化布局，避免 canvas 测量宽度与实际渲染不一致
-  const ready = (document.fonts && document.fonts.ready) ? document.fonts.ready : Promise.resolve();
-  ready.then(() => {
-    setScene('menu');
-  });
+  // 初始化场景：优先等字体加载完再布局，避免 canvas 文字宽度测量偏差
+  const start = () => { setScene('menu'); };
+  if (document.fonts && document.fonts.ready) {
+    Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 1200))]).then(start);
+  } else {
+    start();
+  }
+
+  // 字体后续加载完成且当前不在菜单时，重建场景确保布局按真实字体宽度
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(() => { if (scene !== 'menu') setScene(scene); });
+  }
 
   window.addEventListener('resize', () => { resizeCanvas(); setScene(scene); }, { passive: true });
 
@@ -1321,7 +1338,7 @@ window.__G = {
         options: countState.options.map((_, i) => {
           const o = countOptionGeo(i);
           const r = countOptionRect(o);
-          return { num: o.num, x: o.cx, y: o.cy, h: o.height, rect: [r.x0, r.y0, r.x1, r.y1] };
+          return { num: o.num, x: o.cx, y: o.cy, h: o.height, w: o.w, rect: [r.x0, r.y0, r.x1, r.y1] };
         })
       };
     }
@@ -1333,7 +1350,7 @@ window.__G = {
         options: addState.options.map((_, i) => {
           const o = addOptionGeo(i);
           const r = addOptionRect(o);
-          return { num: o.num, x: o.cx, y: o.cy, h: o.height, rect: [r.x0, r.y0, r.x1, r.y1] };
+          return { num: o.num, x: o.cx, y: o.cy, h: o.height, w: o.w, rect: [r.x0, r.y0, r.x1, r.y1] };
         })
       };
     }

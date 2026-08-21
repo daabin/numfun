@@ -704,6 +704,53 @@ function setScene(name) {
   else if (name === 'add') buildAdd();
 }
 
+/* ============================================================
+   导航：浏览器后退 / 左边缘右滑返回
+   ============================================================ */
+function initHistory() {
+  // 把当前入口标记为菜单，后续 pushState 后浏览器后退即可回到菜单
+  history.replaceState({ scene: 'menu' }, '', '');
+
+  window.addEventListener('popstate', (e) => {
+    if (!e.state || !e.state.scene) return;
+    const target = e.state.scene;
+    if (target !== scene) setScene(target);
+  });
+}
+
+function pushGameScene(name) {
+  if (name !== 'menu') history.pushState({ scene: name }, '', '');
+  setScene(name);
+}
+
+function goBack() {
+  history.back();
+}
+
+let swipeStart = null;
+function trackSwipeStart(e) {
+  const t = e.touches && e.touches[0];
+  if (!t) return;
+  swipeStart = { x: t.clientX, y: t.clientY, t: Date.now() };
+}
+function trackSwipeEnd(e) {
+  if (!swipeStart) return;
+  const t = e.changedTouches && e.changedTouches[0];
+  if (!t) { swipeStart = null; return; }
+  const start = swipeStart;
+  swipeStart = null;
+  if (scene === 'menu') return;
+
+  const dx = t.clientX - start.x;
+  const dy = t.clientY - start.y;
+  const dt = Date.now() - start.t;
+  // 从左边缘 30px 内开始，向右滑动超过 60px，纵向偏移 < 80px，时间 < 400ms
+  if (start.x <= 30 && dx > 60 && Math.abs(dy) < 80 && dt < 400) {
+    e.preventDefault();
+    goBack();
+  }
+}
+
 /* ---------- 菜单 ---------- */
 function buildMenu() {
   bgWave();
@@ -1216,7 +1263,8 @@ function init() {
 
   resizeCanvas();
 
-  // 初始化场景：优先等字体加载完再布局，避免 canvas 文字宽度测量偏差
+  // 初始化导航历史与场景
+  initHistory();
   const start = () => { setScene('menu'); };
   if (document.fonts && document.fonts.ready) {
     Promise.race([document.fonts.ready, new Promise(r => setTimeout(r, 1200))]).then(start);
@@ -1230,6 +1278,10 @@ function init() {
   }
 
   window.addEventListener('resize', () => { resizeCanvas(); setScene(scene); }, { passive: true });
+
+  // 左边缘右滑返回
+  window.addEventListener('touchstart', trackSwipeStart, { passive: true });
+  window.addEventListener('touchend', trackSwipeEnd, { passive: false });
 
   window.addEventListener('mousemove', (e) => {
     trackPointer(e.clientX, e.clientY);
@@ -1258,9 +1310,9 @@ function init() {
   });
 
   document.querySelectorAll('.menu-btns .cta').forEach(btn => {
-    btn.addEventListener('click', () => { pop(480); setScene(btn.dataset.mode); });
+    btn.addEventListener('click', () => { pop(480); pushGameScene(btn.dataset.mode); });
   });
-  document.getElementById('backBtn').addEventListener('click', () => { pop(400); setScene('menu'); });
+  document.getElementById('backBtn').addEventListener('click', () => { pop(400); goBack(); });
   document.getElementById('soundBtn').addEventListener('click', () => {
     soundOn = !soundOn;
     document.getElementById('soundBtn').textContent = soundOn ? '🔊' : '🔇';

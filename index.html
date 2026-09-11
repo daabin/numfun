@@ -270,6 +270,56 @@ function pick(rand, state) {
   };
 }
 
+// 每个精灵头顶粘一小片“番茄蒂叶”的位置（沿用精灵自身尺寸比例）
+const TOMATO_HAIR_TOP = {
+  blob:    { x: 288, y: 2 },
+  cloud:   { x: 348, y: 0 },
+  sprout:  { x: 305, y: 3 },
+  star:    { x: 340, y: 4 },
+  ghost:   { x: 295, y: 5 },
+  urchin:  { x: 395, y: 3 },
+  stack:   { x: 314, y: 4 },
+  flower:  { x: 360, y: 2 },
+  burst:   { x: 365, y: 4 },
+  ninja:   { x: 392, y: 3 }
+};
+
+// 原版精灵不变，只在头顶加一点点“番茄味”：
+// 一颗小蒂 + 两片圆头叶子，像戴了一顶小番茄帽
+function drawTomatoHair(s, body) {
+  const vb = body.viewBox;
+  const spot = TOMATO_HAIR_TOP[body.id] || { x: body.faceCenter.x, y: 3 };
+  const U = Math.min(vb.width, vb.height);
+  const x = spot.x, y = spot.y + U * 0.008;
+  const stemG = '#27712f', leafG = '#55aa4b', leafL = '#82ca70';
+
+  // 短果柄
+  s.strokeStyle = stemG;
+  s.lineWidth = Math.max(1, U * 0.022);
+  s.lineCap = 'round';
+  s.beginPath();
+  s.moveTo(x, y);
+  s.quadraticCurveTo(x + U * 0.012, y - U * 0.035, x + U * 0.006, y - U * 0.07);
+  s.stroke();
+
+  // 两侧叶子（椭圆圆头，向下自然垂在头顶两侧）
+  s.fillStyle = leafG;
+  s.beginPath();
+  s.ellipse(x - U * 0.092, y + U * 0.045, U * 0.072, U * 0.04, 0.55, 0, Math.PI * 2);
+  s.ellipse(x + U * 0.092, y + U * 0.045, U * 0.072, U * 0.04, -0.55, 0, Math.PI * 2);
+  s.fill();
+  // 叶子高光 + 中央蒂芯
+  s.fillStyle = leafL;
+  s.beginPath();
+  s.ellipse(x - U * 0.102, y + U * 0.032, U * 0.028, U * 0.016, 0.5, 0, Math.PI * 2);
+  s.ellipse(x + U * 0.102, y + U * 0.032, U * 0.028, U * 0.016, -0.5, 0, Math.PI * 2);
+  s.fill();
+  s.fillStyle = stemG;
+  s.beginPath();
+  s.arc(x, y + U * 0.012, U * 0.022, 0, Math.PI * 2);
+  s.fill();
+}
+
 function buildSprite(body, eye, color, size) {
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   const c = document.createElement('canvas');
@@ -284,6 +334,7 @@ function buildSprite(body, eye, color, size) {
   s.save(); s.translate(padX, padY); s.scale(d, d);
   s.fillStyle = color.hex;
   s.fill(new Path2D(body.svgPath));
+  drawTomatoHair(s, body);
   s.restore();
   const ov = OVERRIDES.find(o => o.bodyShape === body.id && o.eyeStyle === eye.id);
   const face = ov ? ov.faceCenter : body.faceCenter;
